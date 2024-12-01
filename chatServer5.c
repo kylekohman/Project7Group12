@@ -138,7 +138,7 @@ int main(int argc, char **argv)
 			}
 		}
 
-		if (select(maxfd + 1, &readset, NULL, NULL, NULL) < 0) {//select
+		if (select(maxfd + 1, &readset, &writeset, NULL, NULL) < 0) {//select
 			perror("select");
 			exit(1);
 		}
@@ -192,7 +192,7 @@ int main(int argc, char **argv)
 						np = remove_client(np);
 					}
 				}
-				else if(n == 0)
+				else if(n == 0)//client leaves
 				{
 					snprintf(temp, MAX, "\n%s has left the chat\n", np->username);//attach the message
 					add_to_writebuffs(temp, np);
