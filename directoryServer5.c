@@ -291,10 +291,11 @@ int check_server_uniqueness(char *t, int p, struct server* ser)
 
 char *display_servers() // method for displaying active chat servers
 {
+	char* format_line = "=================================\n";
 	char *display_string = malloc(MAX * 5);
 	char buffer[MAX];
 	int count = 1;
-	snprintf(display_string, MAX, "=================================\nSERVER LIST: Number: Name - Port\nEnter Server Name to Join\n=================================\n");
+	snprintf(display_string, MAX, "%sSERVER LIST: Number: Name - Port\nEnter Server Name to Join\n%s", format_line, format_line);
 	if (SLIST_EMPTY(&head))
 	{
 		strncat(display_string, "No Chat Servers Currently Online\n", MAX);
@@ -304,13 +305,17 @@ char *display_servers() // method for displaying active chat servers
 		struct server* i;
 		SLIST_FOREACH(i, &head, list)
 		{
-			snprintf(buffer, MAX, "%d: %s - %d\n", count, i->serverName, i->port);
-			strncat(display_string, buffer, MAX);
-			count++;
+			if(strncmp(i->serverName, "\0", MAX) != 0 )
+			{
+				snprintf(buffer, MAX, "%d: %s - %d\n", count, i->serverName, i->port);
+				strncat(display_string, buffer, MAX);
+				count++;
+			}
 		}
 	}
-
-	strncat(display_string, "=================================\n", MAX);
+	char temp[MAX];
+	snprintf(temp, MAX, display_string);
+	snprintf(display_string, MAX, "%s%s", temp, format_line);
 	return display_string;
 }
 
