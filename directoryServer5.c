@@ -7,6 +7,10 @@
 #include "inet.h"
 #include "common.h"
 #include <sys/queue.h>
+#include <openssl/ssl.h>
+#include <openssl/err.h>
+#include <openssl/x509.h>
+
 
 SLIST_HEAD(slisthead, server)
 head =
@@ -29,6 +33,7 @@ char *display_servers();
 void encode(char *, char);
 int find_server_port(char *);
 struct server *find_server(int socket);
+int verify_certificate(SSL *ssl, const char *expected_name);
 
 int main(int argc, char **argv)
 {
@@ -37,6 +42,32 @@ int main(int argc, char **argv)
 	struct sockaddr_in cli_addr, serv_addr;
 	char s[MAX];
 	fd_set readset;
+
+	SSL_library_init();
+	SSL_load_error_strings();
+	OpenSSL_add_all_algorithms();
+
+	SSL_CTX *context = SSL_CTX_new(TLS_server_method());
+	if (!context)
+	{
+		fprintf(stderr, "Failed to create SSL context.");
+		exit(0);
+	}
+
+	if (SSL_CTX_use_certificate_file(context, "directoryServer5Cert.pem", SSL_FILETYPE_PEM))
+	{
+		fprintf(stderr, "Failed to load server certificate.");
+		exit(0);
+
+	}
+
+	if (SSL_CTX_use_PrivateKey_file(context, "directoryServer5KeyPassLess.pem", SSL_FILETYPE_PEM))
+	{
+		fprintf(stderr, "Failed to load server private key.");
+		exit(0);
+	}
+
+
 
 	/* Create communication endpoint */
 	if ((sockfd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
@@ -96,9 +127,30 @@ int main(int argc, char **argv)
 				perror("server: accept error");
 				exit(1);
 			}
+
+			SSL *ssl = SSL_new(context);
+			SSL_set_fd(ssl, newsockfd);
+
+			if (SSL_accept(ssl) <= 0)
+			{
+				fprintf(stderr, "Handshake failed");
+				SSL_free(ssl);
+				close(newsockfd);
+				exit(0);
+			}
+
+			if (!verify_certificate(ssl, "Directory Server"))
+			{
+				fprintf(stderr, "Failed certificate verification");
+				SSL_free(ssl);
+				close(newsockfd);
+				exit(0);
+			}
+
+
 			//port = ntohs(cli_addr.sin_port);
 			//fprintf(stderr, "%s:%d Accepted client connection from %s %d\n", __FILE__, __LINE__, inet_ntoa(cli_addr.sin_addr), port); // debug
-			FD_SET(newsockfd, &readset); // add new socket to read set
+			//FD_SET(newsockfd, &readset); // add new socket to read set
 			// update maxfd if necessary
 			if (newsockfd > maxfd)
 			{
@@ -266,3 +318,44 @@ struct server *find_server(int socket)
 	}
 	return NULL;
 }
+
+int verify_certificate(SSL *ssl, const char *expected_name)
+{
+	X509* certif = SSL_get_peer_certificate(ssl);
+	if (!certif)
+	{
+		fprintf(stderr, "Improper SSL input");
+		return 0;
+	}
+
+	char *certif_name[MAX];
+
+	X509_NAME* subject_name = SSL_get_subject_name(SSL);
+	if (!subject_name)
+	{
+		fprintf(stderr, "Failed to get subject name.");
+		X509_free(certif);
+		return 0;
+	}
+
+	X509_NAME_get_text_by_NID(subject_name, NID_commonName, certif_name, sizeof(certif_name));
+
+    if (strncmp(certif_name, expected_name, sizeof(certif_name)) != 0) 
+	{
+        fprintf(stderr, "Certificate common name mismatch. Expected: %s, Got: %s\n", expected_name, certif_name);
+        X509_free(cert);
+        return 0;
+    }
+
+	if (SSL_get_verify_result(ssl) != X509_V_OK) 
+	{
+        fprintf(stderr, "Certificate verification failed.\n");
+        X509_free(cert);
+        return 0;
+    }
+
+	fprintf(stderr, "Certificate verified. Common Name: %s\n", certif_name);
+    X509_free(cert);
+    return 1;
+}
+
