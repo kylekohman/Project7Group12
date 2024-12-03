@@ -354,6 +354,7 @@ void add_to_writebuffs(char* message, struct client* c){
 
 void encode(char *str, char c)
 {
-	memmove(str + 1, str, strnlen(str, MAX) + 1);//move string over
-	str[0] = c;//insert character
+	char temp[MAX];
+	snprintf(temp, MAX, "%c%s", c, str);
+	snprintf(str, MAX, temp);
 }

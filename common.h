@@ -1,3 +1,3 @@
-#define MAX 500
+#define MAX 300
 
 #define MAX_CLIENTS 5

@@ -29,7 +29,6 @@ int check_server_uniqueness(char *, int, struct server*);
 char *display_servers();
 void encode(char *, char);
 int find_server_port(char *);
-struct server *find_server(int socket);
 int set_nonblocking(int sock);
 struct server* remove_server(struct server* ser);
 
@@ -130,7 +129,7 @@ int main(int argc, char **argv)
 
 			//ensure username and buffers are set clean
 		    memset(new_s->serverName, 0, MAX);
-			snprintf(new_s->serverName, MAX, "\0");//init the username to null term
+			//snprintf(new_s->serverName, MAX, "\0");//init the username to null term POSSIBLY REMVOE
 			memset(new_s->to, 0, MAX);
             memset(new_s->fr, 0, MAX);
 
@@ -160,14 +159,6 @@ int main(int argc, char **argv)
 						perror("read error on socket");
 						np = remove_server(np);
 					}				 // close the connection to client
-					/*FD_CLR(i, &readset); // remove from readset
-					//close(i);
-					struct server *server_to_remove = find_server(i);
-					if (server_to_remove != NULL)
-					{
-						SLIST_REMOVE(&head, server_to_remove, server, list); // remove the server from the linked list
-						free(server_to_remove);								 // free the memory
-					}*/
 				}
 				else if(n == 0)//server disconnects
 				{
@@ -188,60 +179,45 @@ int main(int argc, char **argv)
 					char code = np->fr[0];//remove first character
 					memmove(np->fr, np->fr + 1, np->froptr - (np->fr + 1));//remove the encoding from the message
 					np->froptr--;//need to check memory here
-					/*(					// move message memory
-					int len = strnlen(s, MAX);
-					if (s != NULL && len > 0)
-					{
-						memmove(s, s + 1, len); // move string
-						s[len - 1] = '\0';		// ensure null terminator
-					}
-					*/
-
-					//char temp[MAX]; // init temp string
 
 					switch (code)
 					{
-						fprintf(stderr, "INSIDE SWITCH CASE");//debug
 						case 'x': // server attempting to connect
 							parse_message(np->fr, temp, &port);
 							if (!check_server_uniqueness(temp, port, np)) // see if server exists in the linked list already
 							{		
 								add_to_writebuff("dServer name or port already in use", np);										  
-								//write(i, "dServer name or port already in use", MAX); // send 'd'eclined character
 								close(np->sockfd);	//this needs to be removed I think
 								//FD_CLR(i, &readset);								  // remove from readset
 							}
 							else
 							{
 								snprintf(np->serverName, MAX, "%s", temp);
-								//strncpy(new_server->serverName, t, MAX);				   // add their topic
 								np->serverName[MAX - 1] = '\0';					   // ensure null terminator
 								np->port = port;
 							}
 							break;
 						case 'n':							// new client request to see the server option
+						//consider allocating memory for list here
 							char *menu = display_servers(); // display server options
-							//write(i, menu, MAX);			// send message to client
 							add_to_writebuff(menu, np);
 							free(menu);						// free memory
 							break;
 						case 'c': // the clients 'c'hoice of server
 							port = find_server_port(np->fr);
-							//memset(s, 0, MAX); // reset message
+							memset(s, 0, MAX); // reset message
 							if (port == -1)
 							{ // port not found
 								add_to_writebuff("oPlease Enter a Valid Chat Server Name\n", np);
-								//snprintf(s, MAX, "oPlease Enter a Valid Chat Server Name\n");
 							}
 							else
 							{
-								char* port[MAX];
-								snprintf(port, MAX, "b%d", port); // successfully found port
-								add_to_writebuff(port, np);
+								snprintf(s, MAX, "%d", port); // successfully found port
+								encode(s, 'b');
+								add_to_writebuff(s, np);
 								
 								//FD_CLR(i, &readset);		   // remove the client from the directory server's readset
 							}
-							//write(i, s, MAX); // send message
 							break;
 						default:
 							fprintf(stderr, "Invalid request\n");
@@ -255,16 +231,17 @@ int main(int argc, char **argv)
 				if (nwrite < 0 && errno != EWOULDBLOCK) { 
 					perror("write error on socket");
 					np = remove_server(np);
+					continue;
 				}
 				else { 
-					np->tooptr += nwrite;
+					np->tooptr += nwrite;//XXXX
 					if (&(np->to[MAX]) == np->tooptr) { // All data sent 
 						np->tooptr = np->to; 
 					}
 				}
 			}//end of writeset check
-		struct server* np2 = SLIST_NEXT(np, list);
-		np = np2;
+		//struct server* np2 = SLIST_NEXT(np, list);
+		np = = SLIST_NEXT(np, list);
 		}//end of while loop
 	}//end of main loop
 }//end of main
@@ -279,13 +256,7 @@ int check_server_uniqueness(char *t, int p, struct server* ser)
 			return 0;
 		}
 	}
-	//struct server *new_server = malloc(sizeof(struct server)); // create space for server
-	//snprintf(ser->serverName, MAX, "%s", t);
-	//strncpy(new_server->serverName, t, MAX);				   // add their topic
-	//ser->serverName[MAX - 1] = '\0';					   // ensure null terminator
-	//ser->port = p;									   // copy port
-	//new_server->sockfd = socket;							   // set socket
-	//SLIST_INSERT_HEAD(&head, new_server, list);				   // add to list
+
 	return 1;												   // success
 }
 
@@ -293,12 +264,18 @@ char *display_servers() // method for displaying active chat servers
 {
 	char* format_line = "=================================\n";
 	char *display_string = malloc(MAX * 5);
+	if(display_string == NULL)
+	{
+		perror("Unable to allocate memory for display_string");
+		return NULL;
+	}
 	char buffer[MAX];
 	int count = 1;
-	snprintf(display_string, MAX, "%sSERVER LIST: Number: Name - Port\nEnter Server Name to Join\n%s", format_line, format_line);
+	int offset = snprintf(display_string, MAX * 5, "%sSERVER LIST: Number: Name - Port\nEnter Server Name to Join\n%s", format_line, format_line);
+	//snprintf(display_string, MAX, "%sSERVER LIST: Number: Name - Port\nEnter Server Name to Join\n%s", format_line, format_line);
 	if (SLIST_EMPTY(&head))
 	{
-		strncat(display_string, "No Chat Servers Currently Online\n", MAX);
+		snprintf(display_string + offset, MAX * 5 - offset, "%s", "No Chat Servers Currently Online\n");
 	}
 	else
 	{
@@ -307,20 +284,29 @@ char *display_servers() // method for displaying active chat servers
 		{
 			if(strncmp(i->serverName, "\0", MAX) != 0 )
 			{
-				snprintf(buffer, MAX, "%d: %s - %d\n", count, i->serverName, i->port);
-				strncat(display_string, buffer, MAX);
+				int written = snprintf(buffer, MAX, "%d: %s - %d\n", count, i->serverName, i->port);
+				int added = snprintf(display_string + offset, MAX * 5 - offset, "%s", buffer);
+				//strncat(display_string, buffer, MAX);
+				offset += added;
 				count++;
 			}
 		}
 	}
-	char temp[MAX];
-	snprintf(temp, MAX, display_string);
-	snprintf(display_string, MAX, "%s%s", temp, format_line);
+	//char temp[MAX];
+	//snprintf(temp, MAX, display_string);
+	snprintf(display_string + offset, MAX * 5 - offset, "%s", format_line);
 	return display_string;
 }
 
 void parse_message(char *input, char *serverName, int *port)
 {
+	/*
+	if (2 == sscanf(input, "%s%[^~]~%d", serverName, port)){
+		return 0;
+	}
+	return 1;
+	*/
+	
 	int delimiter = -1;
 	for (int i = 0; i < strnlen(input, MAX); i++)
 	{
@@ -334,14 +320,20 @@ void parse_message(char *input, char *serverName, int *port)
 	{
 		strncpy(serverName, input, delimiter); //change this to snprintf
 		serverName[delimiter] = '\0'; // ensure null terminator
-		sscanf(input + delimiter + 1, "%d", port); //this too probably
-	}
+		int i = sscanf(input + delimiter + 1, "%d", port); //this too probably
+		/*if (1 != i) return 1;
+		else return 0;*/
+	}/*
+	else {
+		return 1;
+	}*/
 }
 
 void encode(char *str, char c)
 {
-	memmove(str + 1, str, strnlen(str, MAX) + 1); // move string over
-	str[0] = c;									  // insert character
+	char temp[MAX];
+	snprintf(temp, MAX, "%c%s", c, str);
+	snprintf(str, MAX, temp);								  // insert character
 }
 
 int find_server_port(char *sName)
@@ -356,18 +348,6 @@ int find_server_port(char *sName)
 	return -1;
 }
 
-struct server *find_server(int socket)
-{
-	struct server *np;
-	SLIST_FOREACH(np, &head, list)
-	{
-		if (np->sockfd == socket)
-		{
-			return np;
-		}
-	}
-	return NULL;
-}
 
 /// @brief Sets a given socket to be nonblocking
 /// @param sock the socket to set as nonblocking
@@ -396,7 +376,7 @@ struct server* remove_server(struct server* ser)
 /// @param message the message to add to the buffs
 /// @param s the source server
 void add_to_writebuff(char* message, struct server* s){
-	int len = strnlen(message, MAX);
+	int len = strnlen(message, MAX);// + 1;
 	//check if there is room in the buffer
 	if((s->tooptr + len) < &(s->to[MAX])){
 		snprintf(s->tooptr, &(s->to[MAX]) - s->tooptr, "%s", message);//add to buffer
