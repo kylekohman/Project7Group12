@@ -227,7 +227,7 @@ int main(int argc, char **argv)
 			
 			//Writeset check
 			if(FD_ISSET(np->sockfd, &writeset) && (n = (&(np->to[MAX]) - np->tooptr)) > 0){
-				ssize_t nwrite = write(np->sockfd, np->to, n);
+				ssize_t nwrite = write(np->sockfd, np->to, MAX);//n);
 				if (nwrite < 0 && errno != EWOULDBLOCK) { 
 					perror("write error on socket");
 					np = remove_server(np);
@@ -241,7 +241,7 @@ int main(int argc, char **argv)
 				}
 			}//end of writeset check
 		//struct server* np2 = SLIST_NEXT(np, list);
-		np = = SLIST_NEXT(np, list);
+		np = SLIST_NEXT(np, list);
 		}//end of while loop
 	}//end of main loop
 }//end of main
@@ -376,10 +376,14 @@ struct server* remove_server(struct server* ser)
 /// @param message the message to add to the buffs
 /// @param s the source server
 void add_to_writebuff(char* message, struct server* s){
-	int len = strnlen(message, MAX);// + 1;
+	int len = strnlen(message, MAX) + 1;//maybe remove
+	snprintf(s->tooptr, &(s->to[MAX]) - s->tooptr, "%s", message);//add to buffer
+	s->tooptr += len;//update the pointer
 	//check if there is room in the buffer
+	/*
 	if((s->tooptr + len) < &(s->to[MAX])){
 		snprintf(s->tooptr, &(s->to[MAX]) - s->tooptr, "%s", message);//add to buffer
 		s->tooptr += len;//update the pointer
 	}
+	*/
 }
