@@ -68,7 +68,6 @@ int main(int argc, char **argv)
 	}
 
 
-
 	/* Create communication endpoint */
 	if ((sockfd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
 	{
@@ -330,7 +329,7 @@ int verify_certificate(SSL *ssl, const char *expected_name)
 
 	char *certif_name[MAX];
 
-	X509_NAME* subject_name = SSL_get_subject_name(SSL);
+	X509_NAME* subject_name = SSL_get_subject_name(ssl);
 	if (!subject_name)
 	{
 		fprintf(stderr, "Failed to get subject name.");
@@ -343,19 +342,19 @@ int verify_certificate(SSL *ssl, const char *expected_name)
     if (strncmp(certif_name, expected_name, sizeof(certif_name)) != 0) 
 	{
         fprintf(stderr, "Certificate common name mismatch. Expected: %s, Got: %s\n", expected_name, certif_name);
-        X509_free(cert);
+        X509_free(certif);
         return 0;
     }
 
 	if (SSL_get_verify_result(ssl) != X509_V_OK) 
 	{
         fprintf(stderr, "Certificate verification failed.\n");
-        X509_free(cert);
+        X509_free(certif);
         return 0;
     }
 
 	fprintf(stderr, "Certificate verified. Common Name: %s\n", certif_name);
-    X509_free(cert);
+    X509_free(certif);
     return 1;
 }
 

@@ -4,12 +4,15 @@
 #include <sys/time.h>
 #include <unistd.h>
 #include <string.h>
+#include <fcntl.h>
+#include <errno.h>
 #include "inet.h"
 #include "common.h"
 
 void print_menu();
 void encode(char *, char);
 void connect_to_server(int *sockfd, struct sockaddr_in serv_addr, int port);
+void set_socket_non_blocking(int sockfd);
 
 int main()
 {
@@ -23,6 +26,7 @@ int main()
 
 	// connect to the directory server
 	connect_to_server(&sockfd, serv_addr, SERV_TCP_PORT);
+	set_socket_non_blocking(sockfd);
 	write(sockfd, "n", 1); // write inital message
 	for (;;)
 	{
@@ -57,7 +61,10 @@ int main()
 					}
 
 					/* Send the user's message to the server */
-					write(sockfd, s, MAX);
+					if (write(sockfd, s, MAX) < 0 && errno != EWOULDBLOCK)
+					{
+						perror("Error writing to socket");
+					}
 				}
 				else
 				{
@@ -68,9 +75,18 @@ int main()
 			/* Check whether there's a message from the server to read */
 			if (FD_ISSET(sockfd, &readset))
 			{
-				if ((nread = read(sockfd, s, MAX)) <= 0)
+				if ((nread = read(sockfd, s, MAX)) < 0)
 				{			 // if the client's socket is closed
-					exit(1); // exit the user if the socket is closed
+					if (errno != EWOULDBLOCK && errno != EAGAIN)
+					{
+						perror("Error reading from socket");
+						exit(1); // exit the user if the socket is closed
+					}
+				}
+				else if (nread == 0)
+				{		// if the server closed the connection
+					fprintf(stderr, "Server closed connection\n");
+					exit(1);
 				}
 				else
 				{					  // successful read
@@ -92,6 +108,7 @@ int main()
 						if (sscanf(s, "%d", &port) == 1)
 						{												
 							connect_to_server(&sockfd, serv_addr, port); // connect to chosen server
+							set_socket_non_blocking(sockfd);
 						}
 						else
 						{
@@ -145,6 +162,21 @@ void connect_to_server(int *sockfd, struct sockaddr_in serv_addr, int port)
 	if (connect(*sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0)
 	{
 		perror("client: can't connect to server");
+		exit(1);
+	}
+}
+
+void set_socket_non_blocking(int sockfd)
+{
+	int flags = fcntl(sockfd, F_GETFL, 0);
+	if (flags < 0)
+	{
+		perror("fcntl(F_GETFL) failed");
+		exit(1);
+	}
+	if (fcntl(sockfd, F_SETFL, flags | O_NONBLOCK) < 0)
+	{
+		perror("fcntl(F_SETFL) failed");
 		exit(1);
 	}
 }
