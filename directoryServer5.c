@@ -227,7 +227,8 @@ int main(int argc, char **argv)
 			
 			//Writeset check
 			if(FD_ISSET(np->sockfd, &writeset) && (n = (&(np->to[MAX]) - np->tooptr)) > 0){
-				ssize_t nwrite = write(np->sockfd, np->to, MAX);//n);
+				ssize_t nwrite = write(np->sockfd, np->to, n);//changed from np->to sending MAX will give the display with no server accept
+				fprintf(stderr, "%s\n", np->to);
 				if (nwrite < 0 && errno != EWOULDBLOCK) { 
 					perror("write error on socket");
 					np = remove_server(np);
@@ -237,6 +238,7 @@ int main(int argc, char **argv)
 					np->tooptr += nwrite;//XXXX
 					if (&(np->to[MAX]) == np->tooptr) { // All data sent 
 						np->tooptr = np->to; 
+						fprintf(stderr, "done\n");
 					}
 				}
 			}//end of writeset check

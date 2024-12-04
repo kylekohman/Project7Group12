@@ -73,7 +73,8 @@ int main()
 					exit(1); // exit the user if the socket is closed
 				}
 				else
-				{					  // successful read
+				{		
+					fprintf(stderr, "%s\n", s);			  // successful read
 					char code = s[0]; // remove first character
 
 					// move message memory
