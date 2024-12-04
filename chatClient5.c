@@ -47,12 +47,12 @@ int main()
 					{						 // client is connected to a chat server
 						if (requestUsername) // if the client needs a username
 						{
-							encode(s, 'r');		 // encode message username 'r'equest
+							encode(s, 'U');		 // encode message username 'r'equest
 							requestUsername = 0; // set flag
 						}
 						else // if the client wants to send a message
 						{
-							encode(s, 'm'); // encode messsage username 'm'essage
+							encode(s, 'M'); // encode messsage username 'm'essage
 						}
 					}
 

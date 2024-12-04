@@ -1,62 +1,80 @@
 #include <stdio.h>
 #include <string.h>
-#include <strings.h>
-#include <sys/types.h>
 #include <stdlib.h>
-#include <unistd.h>
+#include <sys/queue.h>
+#include <errno.h>
+#include <fcntl.h>
 #include "inet.h"
 #include "common.h"
-#include <sys/queue.h>
-#include <signal.h>
 
-/*Code adapted from https://www.manpagez.com/man/3/queue*/
-SLIST_HEAD(slisthead, client) head =
-         SLIST_HEAD_INITIALIZER(head);
+// Client structure to hold socket, buffers, and disconnection flag
+struct client
+{
+	int socketNumber;
+	char name[MAX];
+	char toBuffer[MAX], fromBuffer[MAX];
+	char *tooptr, *toiptr;
+	char *froptr, *friptr;
+	int flag;
+	LIST_ENTRY(client)
+	clients;
+};
 
-struct slisthead *headp;
+// initialize the head of the client list
+LIST_HEAD(client_list_head, client);
 
-//init the node structure
-struct client {
-	char username[MAX], to[MAX], fr[MAX];
-	char *tooptr, *froptr;
-	int sockfd;
-	SLIST_ENTRY(client) list;
-} *np;
+//Function prototypes
+// Set the socket to non-blocking mode
+void makeSocketNonblocking(int);
 
-//function prototypes
-int check_username(char[], struct client*);
-struct client* remove_client(struct client*);
-void encode(char *, char );
-int set_nonblocking(int);
-void add_to_writebuffs(char*, struct client*);
+// Broadcast a message to all clients except the sender
+void broadcastMessageToAllClients(struct client_list_head*, const char*, struct client*);
 
+// Handle new client connection and add to the list
+void handleNewClientConnection(int, struct client_list_head*);
+
+// Process client input message
+void handleClientInput(struct client*, struct client_list_head*);
+
+// Write data to a client socket
+void writeToOneClient(struct client*);
+
+// Clean up all clients and close the server socket
+void cleanupAndRemoveAllClients(struct client_list_head*, int);
+
+// Helper method to check if the username is already taken in the client list
+int isUsernameTaken(struct client*, struct client_list_head*);
+
+
+
+// Main server loop
 int main(int argc, char **argv)
 {
-	int				newsockfd, maxfd, dir_sockfd, sockfd, n;
-	unsigned int	clilen;
+	int sockfd, maxfd, dir_sockfd;
 	struct sockaddr_in cli_addr, serv_addr, dir_serv_addr;
-	char				s[MAX];
 	fd_set readset, writeset;
-	int register_server = 1;
-	int firstUser = 1;
-	
-	
+	struct client_list_head client_list;
+	struct client *client;
+	socklen_t clilen;
+
+
 	if(argc != 3){//ensure arugments are provided
 		perror("server: Need name and port to register");
 		exit(1);
 	}
 
-	/* Create communication endpoint for chat server */
-	if ((sockfd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
-		perror("server: can't open stream socket");
+	// Create server socket
+	if ((sockfd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+	{
+		perror("socket creation failed");
 		exit(1);
 	}
 
-	/* Add SO_REAUSEADDR option to prevent address in use errors (modified from: "Hands-On Network
-	* Programming with C" Van Winkle, 2019. https://learning.oreilly.com/library/view/hands-on-network-programming/9781789349863/5130fe1b-5c8c-42c0-8656-4990bb7baf2e.xhtml */
+	// Set socket options (reuse address)
 	int true = 1;
-	if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, (void *)&true, sizeof(true)) < 0) {
-		perror("server: can't set stream socket address reuse option");
+	if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &true, sizeof(true)) < 0)
+	{
+		perror("setsockopt failed");
 		exit(1);
 	}
 
@@ -68,17 +86,20 @@ int main(int argc, char **argv)
 		exit(1);
 	}
 
-	/* Bind socket to local address */
-	memset((char *) &serv_addr, 0, sizeof(serv_addr));
+	// Set up server address
+	memset(&serv_addr, 0, sizeof(serv_addr));
 	serv_addr.sin_family = AF_INET;
 	serv_addr.sin_addr.s_addr = htonl(INADDR_ANY);
-	serv_addr.sin_port		= htons(port);
+	serv_addr.sin_port = htons(port);
 
-	if (bind(sockfd, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0) {
-		perror("server: can't bind local address");
+	// Bind to address
+	if (bind(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0)
+	{
+		perror("bind failed");
 		exit(1);
 	}
 
+	// Start listening for incoming connections
 	listen(sockfd, 5);
 
 	//create a socket for the directory server
@@ -86,7 +107,7 @@ int main(int argc, char **argv)
 		perror("server: can't open sock stream to directory server");
 		exit(1);
 	}
-
+ 
 	if (setsockopt(dir_sockfd, SOL_SOCKET, SO_REUSEADDR, (void *)&true, sizeof(true)) < 0) {
 		perror("server: can't set stream socket address reuse option");
 		exit(1);
@@ -97,264 +118,407 @@ int main(int argc, char **argv)
     dir_serv_addr.sin_addr.s_addr = inet_addr(SERV_HOST_ADDR);
     dir_serv_addr.sin_port = htons(SERV_TCP_PORT);
 
-
 	/*Connect to the directory server*/
     if (connect(dir_sockfd, (struct dir_serv_addr *) &dir_serv_addr, sizeof(dir_serv_addr)) < 0) {
         perror("server: can't connect to directory server");
         exit(1);
 	}
 
-	snprintf(s, MAX, "x%s~%s", argv[1], argv[2]);
-	write(dir_sockfd, s, MAX);//send topic and port to directory server
+	char request[MAX];
+	snprintf(request, MAX, "x%s~%s", argv[1], argv[2]);
+	write(dir_sockfd, request, MAX);
+	// Initialize client list
+	LIST_INIT(&client_list);
 
-	//ADD dir server to readset
-	FD_ZERO(&readset);
-	FD_SET(dir_sockfd, &readset);
-	maxfd = dir_sockfd;
+	for (;;)
+	{
+		// Initialize the descriptor sets
+		FD_ZERO(&readset);
+		FD_ZERO(&writeset);
+		FD_SET(sockfd, &readset);
+		maxfd = sockfd;
 
-	//add listening socket of sub server to readset
-	FD_SET(sockfd, &readset);
-	if (sockfd > maxfd) {
-   		maxfd = sockfd;
-	}
-	
-	for (;;) {
-
-		FD_ZERO(&readset);//clear read set
-		FD_SET(sockfd, &readset);//add the server
-		FD_ZERO(&writeset);//clear the write set
-		maxfd = sockfd;// init maxfd
-
-		//add fd to the correct sets
-		struct client* p;
-		SLIST_FOREACH(p, &head, list){
-			FD_SET(p->sockfd, &readset);
-			if (p->to != p->tooptr) { // Add data recived != data sent
-				FD_SET(p->sockfd, &writeset);
-			}
-			if (p->sockfd > maxfd) 
+		// Add clients to the read/write sets
+		LIST_FOREACH(client, &client_list, clients)
+		{
+			//update maxfd if necessary
+			if (client->socketNumber > maxfd)
 			{
-				maxfd = p->sockfd;//update maxfd
-			}
-		}
-
-		if (select(maxfd + 1, &readset, &writeset, NULL, NULL) < 0) {//select
-			perror("select");
-			exit(1);
-		}
-
-		/* Accept a new connection request */
-		if (FD_ISSET(sockfd, &readset)) {//new connection
-			clilen = sizeof(cli_addr);
-			newsockfd = accept(sockfd, (struct sockaddr *)&cli_addr, &clilen);
-			if (newsockfd < 0) {
-				perror("server: accept error");
-				continue;
+				maxfd = client->socketNumber;
 			}
 
-			//set server to nonblocking
-			if(set_nonblocking(newsockfd) < 0){
-				close(newsockfd);
-				continue;
+			FD_SET(client->socketNumber, &readset);
+			if (client->toiptr > client->tooptr)
+			{
+				FD_SET(client->socketNumber, &writeset);
 			}
 			
-			//ADD CLIENT TO THE LIST
-			struct client *new_c = (struct client *)malloc(sizeof(struct client));
-			if(!new_c){//check malloc success
-				perror("server: failed to malloc new clinet");
-				close(sockfd); //close if failure
-				continue;
-			} 
-			new_c->sockfd = newsockfd; //set the new socket
+		}
 
-			//ensure username and buffers are set clean
-		    memset(new_c->username, 0, MAX);
-			snprintf(new_c->username, MAX, "\0");//init the username to null term
-			memset(new_c->to, 0, MAX);
-            memset(new_c->fr, 0, MAX);
-
-			// Initialize buffer pointers 
-			new_c->tooptr = new_c->to; 
-			new_c->froptr = new_c->fr; 
-
-			// Insert the new client into the linked list 
-			SLIST_INSERT_HEAD(&head, new_c, list);
-    	}
-
-		//LOOP THROUGH CLIENTS
-		struct client* np = SLIST_FIRST(&head);
-		while(np != NULL) {
-			char temp[MAX];
-			if (FD_ISSET(np->sockfd, &readset)) {//make sure its not the server AND inside the readset
-				if ((n = read(np->sockfd, np->froptr, &(np->fr[MAX]) - np->froptr)) < 0) {//connection has been closed
-					if (errno != EWOULDBLOCK) { 
-						perror("read error on socket");
-						np = remove_client(np);
-					}
-				}
-				else if(n == 0)//client leaves
-				{
-					snprintf(temp, MAX, "\n%s has left the chat\n", np->username);//attach the message
-					add_to_writebuffs(temp, np);
-					np = remove_client(np);//remove client from the linked list
-					continue;
-				} 
-				else {//Client message
-					//fprintf(stderr, "SERVER RECEIVED: %s\n", s);//debug
-					np->froptr += n; // Move forward the progress pointer 
-					
-					//possibly remove these checks
-					if (np->froptr > &(np->fr[MAX])) { // If the progress pointer reaches the end of the buffer, reset it 
-						np->froptr = np->fr[MAX - 1];
-						np->fr[MAX - 1] = '\0';
-					}
-
-					char code = np->fr[0];//remove first character
-
-					memmove(np->fr, np->fr + 1, np->froptr - (np->fr + 1));//remove the encoding from the message
-					np->froptr--;//need to check memory here
-
-					char temp[MAX];//init temp string
-
-					switch (code) {
-						case 'd'://declined by the directory server
-							fprintf(stderr, MAX, "%s\n");
-							exit(1);//exit the server
-							break;//probably unnecessary
-						case 'r'://request a username
-							if (SLIST_NEXT(np, list) == NULL){//check if the user who joins is the first user
-								firstUser = 1;
-							}
-							if (check_username(np->fr, np)) {//see if username exists in the linked list already
-
-								if(firstUser){//tell the user they are the first to join
-									snprintf(temp, MAX, "\nYou are the first user to join the chat\n");//first user message
-									encode(temp, 'o');//endcode for standard message
-									//ADD TO CLIENTS WRITE BUFF
-									int len = strnlen(temp, MAX);
-									
-									if((np->tooptr + len) < &(np->to[MAX])){//check if there is room in the buffer
-										snprintf(np->tooptr, &(np->to[MAX]) - np->tooptr, "%s\0", temp);//add to buffer
-										np->tooptr += len;//update the pointer
-									}
-
-									firstUser = 0;//set flag
-								}
-								else{//other users join
-									snprintf(temp, MAX, "\n%s has joined the chat\n", np->username);
-									encode(temp, 'o');//endcode for standard message
-									add_to_writebuffs(temp, np);
-									np->froptr = np->fr;
-								}
-							}
-							else {//username is currently in chat
-								fprintf(stderr, "Username Already Exists\n");//print to std err as no client needs to be notified
-								np = remove_client(np);					
-							}
-							break;
-						case 'm'://message from client
-							snprintf(temp, MAX, "%s: %s", np->username, np->fr);
-							encode(temp, 'o');//endcode for standard message
-							add_to_writebuffs(temp, np);
-							np->froptr = np->fr;
-							break;
-						default:
-							fprintf(stderr, "Invalid request\n");
-					}
-					np->froptr = np->fr;//reset the pointers
-				}//end of else
-				/*
-				encode(s, 'o');//endcode for standard message
-				struct client* cli;
-				SLIST_FOREACH(cli, &head, list){//braodcast to everyone but the sender
-					if(cli->sockfd != np->sockfd){
-						write(cli->sockfd, s, MAX);
-					}					
-				}
-				*/
-			}//end readset
-
-			//Writeset check
-			if(FD_ISSET(np->sockfd, &writeset) && (n = (&(np->to[MAX]) - np->tooptr)) > 0){
-				ssize_t nwrite = write(np->sockfd, np->to, n);
-				if (nwrite < 0 && errno != EWOULDBLOCK) { 
-					perror("write error on socket");
-					np = remove_client(np);
-				}
-				else { 
-					np->tooptr += nwrite;
-					if (&(np->to[MAX]) == np->tooptr) { // All data sent 
-						np->tooptr = np->to; 
-					}
-				}
-			}//end of writeset check
-
-			struct client* np2 = SLIST_NEXT(np, list);
-			np = np2;
-		}// end of while loop
-	}//end of main loop
-}//end of main
-
-/// @brief Checks if a given username is unique
-/// @param un the username to check
-/// @param cli the client who requested the username
-/// @return if the username is unique (1) or not (0)
-int check_username(char un[], struct client* cli)
-{
-	struct client* p;
-	SLIST_FOREACH(p, &head, list)
-	{
-		if(p != cli && strncmp(p->username, un, MAX) == 0)//does username already exist in linked list
+		// Wait for receive activity - check if bad connection
+		if (select(maxfd + 1, &readset, &writeset, NULL, NULL) < 0)
 		{
-			return 0;
+			if (errno == EINTR){
+				continue;;
+			}
+			printf("\nselect failed");
+			break;
+		}
+
+		// Check for new client connections
+		if (FD_ISSET(sockfd, &readset))
+		{
+			clilen = sizeof(cli_addr);
+			//make the new socket connection
+			int newsockfd = accept(sockfd, (struct sockaddr *)&cli_addr, &clilen);
+
+			if(newsockfd < 0){
+				printf("\nError in making the new socket");
+				continue;
+			}
+
+			if (newsockfd >= 0)
+			{
+				//count the clients to determine appropriate action with new client connection
+				int clientCount = 0;
+				struct client *counterClient;
+				LIST_FOREACH(counterClient, &client_list, clients)
+				{
+					clientCount++;
+				}
+				//if too many clients, close the connection after writing to the client to try again
+				if (clientCount >= MAX_CLIENTS)
+				{
+					const char *serverFullMessage = "Can't join the server - Server is full.\n";
+					write(newsockfd, serverFullMessage, strlen(serverFullMessage));
+					close(newsockfd);
+				}
+				else
+				{
+					//set the socket to nonblocking and register a new client
+					makeSocketNonblocking(newsockfd);
+					handleNewClientConnection(newsockfd, &client_list);
+				}
+			}	
+		}
+
+		// Process input and output for each client
+		LIST_FOREACH(client, &client_list, clients)
+		{
+			//check the write set
+			if (FD_ISSET(client->socketNumber, &writeset))
+			{
+				//handle the writing to clients from write
+				writeToOneClient(client);
+			}
+			//check the readset
+			if (FD_ISSET(client->socketNumber, &readset))
+			{
+				//handle the client input from read
+				handleClientInput(client, &client_list);
+			}
 		}
 	}
-	snprintf(cli->username, MAX, "%s", un);//add their username
-	cli->username[MAX - 1] = '\0';//ensure null terminator
-	return 1;
+
+	// Clean up clients and close server socket
+	cleanupAndRemoveAllClients(&client_list, sockfd);
+	return 0;
 }
 
-/// @brief removes a client from the linked list
-/// @param cli the client to remove
-struct client* remove_client(struct client* cli)
+// Helper Functions
+
+// Set the socket to non-blocking mode
+// code adapted from the O'Reilly textbook. chapter 16
+void makeSocketNonblocking(int sock)
 {
-	close(cli->sockfd);
-	struct client* n2 = SLIST_NEXT(cli, list);
-	SLIST_REMOVE(&head, cli, client, list);//remove client from linked list CHECK
-	free(cli);
-	return n2;
+	int flags = fcntl(sock, F_GETFL, 0);
+	if (flags < 0)
+	{
+		perror("fcntl get failed");
+		exit(1);
+	}
+	flags |= O_NONBLOCK;
+	if (fcntl(sock, F_SETFL, flags) < 0)
+	{
+		perror("fcntl set failed");
+		exit(1);
+	}
 }
 
-/// @brief Sets a given socket to be nonblocking
-/// @param sock the socket to set as nonblocking
-/// @return if the set was successful
-int set_nonblocking(int sock) {
-    int flags = fcntl(sock, F_GETFL, 0);
-    if (flags == -1 || fcntl(sock, F_SETFL, flags | O_NONBLOCK) == -1) {
-        perror("Error setting non-blocking mode");
-        return -1;
+// Broadcast a message to all clients except the sender
+void broadcastMessageToAllClients(struct client_list_head *head, const char *message, struct client *sender)
+{
+	// make a temp client that will be used as an iterator
+	struct client *search;
+
+	// This could be put to a helper method
+	//  Count connected clients
+	int clientCount = 0;
+	LIST_FOREACH(search, head, clients)
+	{
+		// if there is a valid username
+		// also count sockets
+		if (search->name[0] != '\0' && search->socketNumber > 0)
+		{
+			clientCount++;
+		}
+	}
+	// If the message is for the first client notify that they are the first to join
+	if (clientCount == 1)
+	{
+		// make a new buffer and get the length of it so we know how to advance the pointer
+		const char *firstUserJoinedMessage = "The first user has joined the chat\n";
+		size_t firstUserJoinedMessageLength = strlen(firstUserJoinedMessage);
+		// If there is space to receive the message (end of buffer minus data already sent)
+		if (&sender->toBuffer[MAX - 1] - sender->toiptr >= firstUserJoinedMessageLength)
+		{
+			// copy into the clients to buffer
+			memcpy(sender->toiptr, firstUserJoinedMessage, firstUserJoinedMessageLength);
+			// advance the pointer
+			sender->toiptr += firstUserJoinedMessageLength;
+			// ensure null termination
+			*(sender->toiptr) = '\0';
+		}
+		// No need to broadcast to others since there are none
+		return;
+	}
+
+	// get the message length
+	size_t messageLength = strnlen(message, MAX - 1);
+
+
+	// Send the message to all clients except the sender
+	LIST_FOREACH(search, head, clients)
+	{
+		// ensure that we don't send to ourselves and we only send to a valid user (they have a name)
+		if (search != sender && search->name[0] != '\0' && search -> socketNumber > 0)
+		{
+			// get the size available to use
+			size_t spaceAvailable = &search->toBuffer[MAX - 1] - search->toiptr;
+			// make sure there is room
+			if (spaceAvailable > 0)
+			{
+				// get our variable that will represent the amount of bytes we copy
+				size_t bytesToCopy;
+				
+				//only copy what is available
+				if(messageLength > spaceAvailable)
+				{
+					bytesToCopy = spaceAvailable;
+				}
+				//copy the full message
+				else
+				{
+					bytesToCopy = messageLength;
+				}
+				//write to buffer, advance pointer, ensure null termination
+				memcpy(search->toiptr, message, bytesToCopy);
+				search->toiptr += bytesToCopy;
+				*(search->toiptr) = '\0';
+			}
+		}
+	}
+}
+
+// Handle new client connection and add to the list
+void handleNewClientConnection(int newsockfd, struct client_list_head *client_list)
+{
+	//malloc the new client that is going to be added
+	struct client *newClient = malloc(sizeof(struct client));
+	//initialize socket, name, message buffers, and pointers
+	newClient->socketNumber = newsockfd;
+	memset(newClient->name, 0, MAX);
+	memset(newClient->toBuffer, 0, MAX);
+	memset(newClient->fromBuffer, 0, MAX);
+	newClient->toiptr = newClient->tooptr = newClient->toBuffer;
+	newClient->friptr = newClient->froptr = newClient->fromBuffer;
+
+	// Add client to the list
+	LIST_INSERT_HEAD(client_list, newClient, clients);
+}
+
+// Process client input message
+void handleClientInput(struct client *client, struct client_list_head *client_list)
+{
+	//read from the client socket from the beginning of the message (fri or our current position)
+	// to the available space in the buffer (MAX - fri)
+	ssize_t nBytesRead = read(client->socketNumber, client->friptr, &client->fromBuffer[MAX - 1] - client->friptr);
+
+	//an error or disconnection has occured
+	if (nBytesRead <= 0)
+	{
+		//check EWOULDBLOCK (nonblocking error)
+		if (!(nBytesRead < 0 && errno == EWOULDBLOCK))
+		{
+			//check to see if it's a valid client (theres a username)
+			if (client->name[0] != '\0')
+			{
+				//at this point we need to remove the user, cleanup, and notify everyone that they've left
+				char clientHasLeftBuffer[MAX];
+				snprintf(clientHasLeftBuffer, MAX - 1, "%s left the chat\n", client->name);
+				broadcastMessageToAllClients(client_list, clientHasLeftBuffer, client);
+			}
+			//cleanup
+			close(client->socketNumber);
+			LIST_REMOVE(client, clients);
+			free(client);
+		}
+		return;
+	}
+
+	//find the end of the message by checking for a new line or a null terminatitor
+	char *termination = NULL;
+	for (size_t i = 0; i < nBytesRead; i++)
+	{
+		if (client->friptr[i] == '\0' || client->friptr[i] == '\n')
+		{
+			//update termination point when necessary
+			termination = client->friptr + i;
+			//if we found it we can exit
+			break;
+		}
+	}
+
+	//the end of message was found indicating a valid message has occured
+	if (termination != NULL)
+	{
+		//ensure null termination
+		*termination = '\0';
+		//Check for the special message char - if U with an empty username, we have to assign one
+		if (client->friptr[0] == 'U')
+		{
+			//call the helper method to check if the username is taken
+			int isTaken = isUsernameTaken(client, client_list);
+
+			//if a dupe was found
+			if (isTaken == 1)
+			{
+				//buffer for the error message
+				const char *duplicateNameMessage = "Username is already taken. Please reconnect again\n";
+				//size of the error message
+				size_t duplicateNameMessageLength = strlen(duplicateNameMessage);
+				//copy into the clients message buffer
+				memcpy(client->toiptr, duplicateNameMessage, duplicateNameMessageLength);
+				//advance the pointer
+				client->toiptr += duplicateNameMessageLength;
+				//set their disconnection flag so they get removed later
+				client->flag = 1;
+			}
+			//a dupe was not found
+			else
+			{
+				//copy the name into the buffer but up to MAX - 2 becuase MAX -1 needs to be '\0'
+				strncpy(client->name, client->friptr + 1, MAX - 2);
+				//ensure null termination
+				client->name[MAX - 1] = '\0';
+				//make a buffer for the "user x has joined the chat message"
+				char clientHasJoinedMessage[MAX];
+				//copy message contents into the buffer
+				snprintf(clientHasJoinedMessage, MAX - 1, "%s joined the chat\n", client->name);
+				//broadcast that buffer to all clients
+				broadcastMessageToAllClients(client_list, clientHasJoinedMessage, client);
+			}
+		}
+		//this should be what happens most of the time since username can only be set once in the client side
+		//If there is an M and the username of the client is valid, handle normal message
+		else if (client->friptr[0] == 'M')
+		{
+			//new message buffer
+			char normalMessage[MAX];
+			//copy contents into the message buffer
+			snprintf(normalMessage, MAX - 1, "%s: %s\n", client->name, client->friptr + 1);
+			//broadcast to all clients
+			broadcastMessageToAllClients(client_list, normalMessage, client);
+		}
+
+		// Reset the input buffer
+		client->froptr = client->friptr = client->fromBuffer;
+		memset(client->fromBuffer, 0, MAX);
+	}
+}
+
+// Write data to a client socket
+void writeToOneClient(struct client *client)
+{
+	//if there is data to send
+	if (client->toiptr > client->tooptr)
+	{
+		//get the size of what we're attempting to write
+		ssize_t nBytes = write(client->socketNumber, client->tooptr, client->toiptr - client->tooptr);
+		//there was an error of some kind
+		if (nBytes <= 0)
+		{
+			//check if that error was a nonblocking error
+			if (errno != EWOULDBLOCK)
+			{
+				//cleanup
+				close(client->socketNumber);
+				LIST_REMOVE(client, clients);
+				free(client);
+			}
+		}
+
+		else
+		{
+			//advance the pointer by the number of bytes written
+			client->tooptr += nBytes;
+			//if the pointers are equal (ie no more data to send)
+			if (client->tooptr == client->toiptr)
+			{
+				//if the client has a reason to disconnect remove them
+				if (client->flag == 1)
+				{
+					//remove and cleanup
+					close(client->socketNumber);
+					LIST_REMOVE(client, clients);
+					free(client);
+				}
+				//reset the buffers 
+				client->tooptr = client->toiptr = client->toBuffer;
+				memset(client->toBuffer, 0, MAX);
+			}
+		}
+	}
+}
+
+// Clean up all clients and close the server socket
+void cleanupAndRemoveAllClients(struct client_list_head *client_list, int sockfd)
+{
+	//code adapted from the linux manual pages on the LIST_ENTRY
+	struct client *currentClient = LIST_FIRST(client_list);
+	struct client *nextClient;
+
+	// Traverse through the client list and clean up
+	while (currentClient != NULL)
+	{
+		// Get the next client in the list
+		nextClient = LIST_NEXT(currentClient, clients);
+		// Remove from list
+		LIST_REMOVE(currentClient, clients);
+		// Close the client's socket and free the memory
+		close(currentClient->socketNumber);
+		free(currentClient);
+		// Move to the next client
+		currentClient = nextClient;
+	}
+
+	// close the server listening socket
+	close(sockfd);
+}
+
+// Helper method to check if the username is already taken in the client list
+int isUsernameTaken(struct client *client, struct client_list_head *client_list) {
+    struct client *clientCheck;
+
+    // Iterate through the client list to check for duplicate usernames
+    LIST_FOREACH(clientCheck, client_list, clients) {
+        // Ensure we don't compare the username with the same client, and only consider non-empty usernames
+        if (clientCheck != client && strncmp(clientCheck->name, client->friptr + 1, MAX - 1) == 0) {
+            // If a match is found, return 1 (username is taken)
+            return 1;
+        }
     }
+
+    // If no match is found, return 0 (username is available)
     return 0;
-}
-
-/// @brief Adds a message to all besides the source client's writebuff
-/// @param message the message to add to the buffs
-/// @param c the source client
-void add_to_writebuffs(char* message, struct client* c){
-	struct client* other_cli;
-	SLIST_FOREACH(other_cli, &head, list){
-		int len = strnlen(message, MAX);
-		//check if there is room in the buffer
-		if(other_cli != c && (other_cli->tooptr + len) < &(other_cli->to[MAX])){
-			snprintf(other_cli->tooptr, &(other_cli->to[MAX]) - other_cli->tooptr, "%s", message);//add to buffer
-			other_cli->tooptr += len;//update the pointer
-		}
-	}
-}
-
-void encode(char *str, char c)
-{
-	char temp[MAX];
-	snprintf(temp, MAX, "%c%s", c, str);
-	snprintf(str, MAX, temp);
 }

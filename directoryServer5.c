@@ -241,7 +241,7 @@ int main(int argc, char **argv)
 				}
 			}//end of writeset check
 		//struct server* np2 = SLIST_NEXT(np, list);
-		np = = SLIST_NEXT(np, list);
+		np = SLIST_NEXT(np, list);
 		}//end of while loop
 	}//end of main loop
 }//end of main
