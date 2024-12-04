@@ -20,7 +20,7 @@ struct server
 	char serverName[MAX], to[MAX], fr[MAX];;
 	int port;
 	int sockfd;
-	char *tooptr, *froptr;
+	char *tooptr, *froptr, *toiptr, *friptr;
 	SLIST_ENTRY(server)
 	list;
 } *np;
@@ -87,7 +87,7 @@ int main(int argc, char **argv)
 		struct server* p;
 		SLIST_FOREACH(p, &head, list){
 			FD_SET(p->sockfd, &readset);
-			if (p->to != p->tooptr) { // Add data recived != data sent
+			if (p->toiptr > p->tooptr) { // Add data recived != data sent
 				FD_SET(p->sockfd, &writeset);
 			}
 			if (p->sockfd > maxfd) 
@@ -107,6 +107,7 @@ int main(int argc, char **argv)
 		if (FD_ISSET(sockfd, &readset))//new server/client connection 
 		{ // new connection
 			newsockfd = accept(sockfd, (struct sockaddr *)&cli_addr, &clilen);
+
 			if (newsockfd < 0)
 			{
 				perror("server: accept error");
@@ -134,8 +135,8 @@ int main(int argc, char **argv)
             memset(new_s->fr, 0, MAX);
 
 			// Initialize buffer pointers 
-			new_s->tooptr = new_s->to; 
-			new_s->froptr = new_s->fr; 
+			new_s->tooptr = new_s->toiptr = new_s->to; 
+			new_s->froptr = new_s->friptr = new_s->fr; 
 			//port = ntohs(cli_addr.sin_port);
 			//fprintf(stderr, "%s:%d Accepted client connection from %s %d\n", __FILE__, __LINE__, inet_ntoa(cli_addr.sin_addr), port); // debug
 			/*FD_SET(newsockfd, &readset); // add new socket to read set
@@ -153,7 +154,7 @@ int main(int argc, char **argv)
 			char temp[MAX];
 			if (FD_ISSET(np->sockfd, &readset))
 			{
-				if ((n = read(np->sockfd, np->froptr, &(np->fr[MAX]) - np->froptr)) < 0)
+				if ((n = read(np->sockfd, np->friptr, &(np->fr[MAX - 1]) - np->friptr)) < 0)
 				{		
 					if (errno != EWOULDBLOCK) { 
 						perror("read error on socket");
@@ -168,62 +169,80 @@ int main(int argc, char **argv)
 				else
 				{ // Client message
 					fprintf(stderr, "DIR SERVER RECEIVED: %s\n", np->fr);//debug
-					np->froptr += n;
 
-					if (np->froptr > &(np->fr[MAX])) { // If the progress pointer reaches the end of the buffer, reset it 
-						fprintf(stderr, "Inside the if\n");
-						np->froptr = np->fr[MAX - 1];
-						np->fr[MAX - 1] = '\0';
-					}
-
-					char code = np->fr[0];//remove first character
-					memmove(np->fr, np->fr + 1, np->froptr - (np->fr + 1));//remove the encoding from the message
-					np->froptr--;//need to check memory here
-
-					switch (code)
+					char *termination = NULL;
+					for (size_t i = 0; i < n; i++)
 					{
-						case 'x': // server attempting to connect
-							parse_message(np->fr, temp, &port);
-							if (!check_server_uniqueness(temp, port, np)) // see if server exists in the linked list already
-							{		
-								add_to_writebuff("dServer name or port already in use", np);										  
-								close(np->sockfd);	//this needs to be removed I think
-								//FD_CLR(i, &readset);								  // remove from readset
-							}
-							else
-							{
-								snprintf(np->serverName, MAX, "%s", temp);
-								np->serverName[MAX - 1] = '\0';					   // ensure null terminator
-								np->port = port;
-							}
+						if (np->friptr[i] == '\0' || np->friptr[i] == '\n')
+						{
+							//update termination point when necessary
+							termination = np->friptr + i;
+							//if we found it we can exit
 							break;
-						case 'n':							// new client request to see the server option
-						//consider allocating memory for list here
-							char *menu = display_servers(); // display server options
-							add_to_writebuff(menu, np);
-							free(menu);						// free memory
-							break;
-						case 'c': // the clients 'c'hoice of server
-							port = find_server_port(np->fr);
-							memset(s, 0, MAX); // reset message
-							if (port == -1)
-							{ // port not found
-								add_to_writebuff("oPlease Enter a Valid Chat Server Name\n", np);
-							}
-							else
-							{
-								snprintf(s, MAX, "%d", port); // successfully found port
-								encode(s, 'b');
-								add_to_writebuff(s, np);
-								
-								//FD_CLR(i, &readset);		   // remove the client from the directory server's readset
-							}
-							break;
-						default:
-							fprintf(stderr, "Invalid request\n");
+						}
 					}
-				}
-			}//end readset check
+					if (termination != NULL)
+					{
+						//ensure null termination
+						*termination = '\0';
+						//np->froptr += n;
+						/*
+						if (np->froptr > &(np->fr[MAX])) { // If the progress pointer reaches the end of the buffer, reset it 
+							fprintf(stderr, "Inside the if\n");
+							np->froptr = np->fr[MAX - 1];
+							np->fr[MAX - 1] = '\0';
+						}
+						*/
+
+						char code = np->fr[0];//remove first character
+						memmove(np->fr, np->fr + 1, np->froptr - (np->fr + 1));//remove the encoding from the message
+						np->froptr--;//need to check memory here
+
+						switch (code)
+						{
+							case 'x': // server attempting to connect
+								parse_message(np->fr, temp, &port);
+								if (!check_server_uniqueness(temp, port, np)) // see if server exists in the linked list already
+								{		
+									add_to_writebuff("dServer name or port already in use", np);										  
+									close(np->sockfd);	//this needs to be removed I think
+									//FD_CLR(i, &readset);								  // remove from readset
+								}
+								else
+								{
+									snprintf(np->serverName, MAX, "%s", temp);
+									np->serverName[MAX - 1] = '\0';					   // ensure null terminator
+									np->port = port;
+								}
+								break;
+							case 'n':							// new client request to see the server option
+							//consider allocating memory for list here
+								char *menu = display_servers(); // display server options
+								add_to_writebuff(menu, np);
+								free(menu);						// free memory
+								break;
+							case 'c': // the clients 'c'hoice of server
+								port = find_server_port(np->fr);
+								memset(s, 0, MAX); // reset message
+								if (port == -1)
+								{ // port not found
+									add_to_writebuff("oPlease Enter a Valid Chat Server Name\n", np);
+								}
+								else
+								{
+									snprintf(s, MAX, "%d", port); // successfully found port
+									encode(s, 'b');
+									add_to_writebuff(s, np);
+									
+									//FD_CLR(i, &readset);		   // remove the client from the directory server's readset
+								}
+								break;
+							default:
+								fprintf(stderr, "Invalid request\n");
+						}
+					}
+				}//end of terminator if
+			}//end of readset check
 			
 			//Writeset check
 			if(FD_ISSET(np->sockfd, &writeset) && (n = (&(np->to[MAX]) - np->tooptr)) > 0){
