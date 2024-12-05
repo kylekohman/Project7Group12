@@ -251,10 +251,13 @@ int main(int argc, char **argv)
 				ssize_t n = ssl_read_nb(np->ssl, np->froptr, &(np->fr[MAX]) - np->froptr, np->sockfd);
 				if (n <= 0)
 				{
-					if (n < 0 && errno != EWOULDBLOCK)
+					if (errno == EWOULDBLOCK)
 					{
 						perror("read error on socket");
+						continue;
 					}
+					snprintf(temp, MAX, "\n%s has left the chat\n", np -> username);
+					add_to_writebuffs(temp, np);
 					np = remove_client(np);
 					continue;
 				}
