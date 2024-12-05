@@ -123,7 +123,7 @@ int main()
 					int len = strlen(s);
 					if (len > 1)
 					{
-						memmove(s, s + 1, len);
+						memmove(s, s + 1, len + 1);
 						s[len - 1] = '\0';
 					}
 					else
@@ -151,8 +151,7 @@ int main()
 							exit(1);
 						}
 						print_menu();
-						requestUsername = 1; // Ensure we request the username after connecting to chat server
-
+						requestUsername = 1;
 						break;
 					}
 
@@ -312,8 +311,15 @@ void print_menu()
 
 void encode(char *str, char c)
 {
-	memmove(str + 1, str, strlen(str) + 1); // move string over
-	str[0] = c;								// insert character
+	int len = strlen(str);
+	if (len + 1 >= MAX)
+	{
+		fprintf(stderr, "ERROR: Input string too long to encode\n");
+		return;
+	}
+	memmove(str + 1, str, len + 1);
+	str[0] = c;
+	str[len + 1] = '\0';
 }
 
 SSL_CTX *initialize_ssl_ctx(const char *cert_file, const char *key_file, const char *ca_file)

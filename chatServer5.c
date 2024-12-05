@@ -155,19 +155,8 @@ int main(int argc, char **argv)
 	}
 
 	snprintf(s, MAX, "x%s~%s", argv[1], argv[2]);
-	fprintf(stderr, "Sending registration: %s\n", s); // Add this line
+	fprintf(stderr, "Sending registration: %s\n", s);
 	ssl_write_nb(dir_ssl, s, MAX, dir_sockfd);
-
-	/*
-		char response[MAX];
-		if (ssl_read_nb(dir_ssl, response, MAX, dir_sockfd) > 0)
-		{
-			fprintf(stderr, "Directory server response: %s\n", response);
-		}
-		*/
-
-	printf("Chat server started. Listening on port %d\n", port);
-	printf("Registered with directory server as '%s' on port %d\n", argv[1], port);
 
 	for (;;)
 	{
@@ -206,8 +195,6 @@ int main(int argc, char **argv)
 				continue;
 			}
 
-			printf("New client connection on socket %d\n", newsockfd);
-
 			// SSL handshake for the client
 			SSL *client_ssl = SSL_new(ctx);
 			if (!client_ssl)
@@ -217,7 +204,6 @@ int main(int argc, char **argv)
 			}
 
 			SSL_set_fd(client_ssl, newsockfd);
-			printf("Starting SSL handshake with client on socket %d\n", newsockfd);
 
 			if (SSL_accept(client_ssl) <= 0)
 			{
@@ -228,8 +214,6 @@ int main(int argc, char **argv)
 				close(newsockfd);
 				continue;
 			}
-
-			printf("SSL handshake completed for client on socket %d\n", newsockfd);
 
 			if (set_nonblocking(newsockfd) < 0)
 			{
@@ -264,10 +248,7 @@ int main(int argc, char **argv)
 			char temp[MAX];
 			if (FD_ISSET(np->sockfd, &readset))
 			{
-				ssize_t n = ssl_read_nb(np->ssl, np->froptr,
-										&(np->fr[MAX]) - np->froptr,
-										np->sockfd);
-
+				ssize_t n = ssl_read_nb(np->ssl, np->froptr, &(np->fr[MAX]) - np->froptr, np->sockfd);
 				if (n <= 0)
 				{
 					if (n < 0 && errno != EWOULDBLOCK)
@@ -281,14 +262,14 @@ int main(int argc, char **argv)
 				np->froptr += n;
 				if (np->froptr > &(np->fr[MAX]))
 				{
-					np->froptr = np->fr[MAX - 1];
+					np->froptr = np->fr + MAX - 1;
 					np->fr[MAX - 1] = '\0';
 				}
-				printf("Server: Received '%s' from client socket %d\n", np->fr, np->sockfd);
-
 				char code = np->fr[0];
-				memmove(np->fr, np->fr + 1, np->froptr - (np->fr + 1));
-				np->froptr--;
+				size_t data_len = np->froptr - (np->fr + 1);
+				memmove(np->fr, np->fr + 1, data_len);
+				np->fr[data_len] = '\0';
+				np->froptr = np->fr + data_len;
 
 				switch (code)
 				{
@@ -297,14 +278,8 @@ int main(int argc, char **argv)
 					{
 						firstUser = 1;
 					}
-					printf("Server: First user status: %d\n", firstUser);
-
-					printf("Server: Received username '%s'\n", np->fr);
-
 					if (check_username(np->fr, np))
 					{
-						printf("Server: Username '%s' is unique.\n", np->username);
-
 						if (firstUser)
 						{
 							snprintf(temp, MAX, "\nYou are the first user to join the chat\n");
@@ -327,12 +302,11 @@ int main(int argc, char **argv)
 					}
 					else
 					{
-						printf("Server: Username '%s' is already taken.\n", np->fr);
 						np = remove_client(np);
 						continue;
 					}
 					break;
-				case 'm':
+				case 'm': // Process chat message
 					snprintf(temp, MAX, "%s: %s", np->username, np->fr);
 					encode(temp, 'o');
 					add_to_writebuffs(temp, np);
@@ -348,7 +322,6 @@ int main(int argc, char **argv)
 			if (FD_ISSET(np->sockfd, &writeset) &&
 				(n = (&(np->to[MAX]) - np->tooptr)) > 0)
 			{
-
 				ssize_t nwrite = ssl_write_nb(np->ssl, np->to, n, np->sockfd);
 				if (nwrite < 0 && errno != EWOULDBLOCK)
 				{
@@ -357,8 +330,6 @@ int main(int argc, char **argv)
 				}
 				else
 				{
-					printf("Server: Sending '%s' to client socket %d\n", temp, np->sockfd);
-
 					np->tooptr += nwrite;
 					if (&(np->to[MAX]) == np->tooptr)
 					{
