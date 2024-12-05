@@ -47,11 +47,10 @@ int main(int argc, char **argv)
 	int firstUser = 1;
 	SSL_CTX *ctx, *dir_ctx;
 	SSL *dir_ssl;
-	printf("No seg fault :D");
 
 	if (argc != 3)
 	{ // ensure arugments are provided
-		perror("server: Need name and port to register");
+		fprintf(stderr, "server: Need name and port to register\n");
 		exit(1);
 	}
 
@@ -74,7 +73,7 @@ int main(int argc, char **argv)
 	/* Create communication endpoint for chat server */
 	if ((sockfd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
 	{
-		perror("server: can't open stream socket");
+		fprintf(stderr, "server: can't open stream socket\n");
 		exit(1);
 	}
 
@@ -83,7 +82,7 @@ int main(int argc, char **argv)
 	int true = 1;
 	if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, (void *)&true, sizeof(true)) < 0)
 	{
-		perror("server: can't set stream socket address reuse option");
+		fprintf(stderr, "server: can't set stream socket address reuse option\n");
 		exit(1);
 	}
 
@@ -103,17 +102,16 @@ int main(int argc, char **argv)
 
 	if (bind(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0)
 	{
-		perror("server: can't bind local address");
+		fprintf(stderr, "server: can't bind local address\n");
 		exit(1);
 	}
 
 	listen(sockfd, 5);
-	printf("Chat server is now listening on port %d\n", port);
 
 	// create a socket for the directory server
 	if ((dir_sockfd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
 	{
-		perror("server: can't open sock stream to directory server");
+		fprintf(stderr, "server: can't open sock stream to directory server\n");
 		exit(1);
 	}
 
@@ -126,7 +124,7 @@ int main(int argc, char **argv)
 	/*Connect to the directory server*/
 	if (connect(dir_sockfd, (struct sockaddr *)&dir_serv_addr, sizeof(dir_serv_addr)) < 0)
 	{
-		perror("server: can't connect to directory server");
+		fprintf(stderr, "server: can't connect to directory server\n");
 		exit(1);
 	}
 
@@ -134,7 +132,7 @@ int main(int argc, char **argv)
 	dir_ssl = SSL_new(dir_ctx);
 	if (!dir_ssl)
 	{
-		perror("Failed to create SSL for directory connection");
+		fprintf(stderr, "Failed to create SSL for directory conncetion\n");
 		exit(1);
 	}
 
@@ -145,8 +143,6 @@ int main(int argc, char **argv)
 		exit(1);
 	}
 
-	fprintf(stderr, "Attempting to verify with name: %s\n", argv[1]);
-
 	// Verify directory server certificate
 	if (!verify_certificate(dir_ssl, "Directory Server"))
 	{
@@ -155,19 +151,7 @@ int main(int argc, char **argv)
 	}
 
 	snprintf(s, MAX, "x%s~%s", argv[1], argv[2]);
-	fprintf(stderr, "Sending registration: %s\n", s); // Add this line
 	ssl_write_nb(dir_ssl, s, MAX, dir_sockfd);
-
-	/*
-		char response[MAX];
-		if (ssl_read_nb(dir_ssl, response, MAX, dir_sockfd) > 0)
-		{
-			fprintf(stderr, "Directory server response: %s\n", response);
-		}
-		*/
-
-	printf("Chat server started. Listening on port %d\n", port);
-	printf("Registered with directory server as '%s' on port %d\n", argv[1], port);
 
 	for (;;)
 	{
@@ -192,7 +176,7 @@ int main(int argc, char **argv)
 
 		if (select(maxfd + 1, &readset, &writeset, NULL, NULL) < 0)
 		{
-			perror("select");
+			fprintf(stderr, "error - select call has failed\n");
 			exit(1);
 		}
 
@@ -202,11 +186,9 @@ int main(int argc, char **argv)
 			newsockfd = accept(sockfd, (struct sockaddr *)&cli_addr, &clilen);
 			if (newsockfd < 0)
 			{
-				perror("server: accept error");
+				fprintf(stderr, "server: accept error\n");
 				continue;
 			}
-
-			printf("New client connection on socket %d\n", newsockfd);
 
 			// SSL handshake for the client
 			SSL *client_ssl = SSL_new(ctx);
@@ -217,7 +199,6 @@ int main(int argc, char **argv)
 			}
 
 			SSL_set_fd(client_ssl, newsockfd);
-			printf("Starting SSL handshake with client on socket %d\n", newsockfd);
 
 			if (SSL_accept(client_ssl) <= 0)
 			{
@@ -229,8 +210,6 @@ int main(int argc, char **argv)
 				continue;
 			}
 
-			printf("SSL handshake completed for client on socket %d\n", newsockfd);
-
 			if (set_nonblocking(newsockfd) < 0)
 			{
 				SSL_free(client_ssl);
@@ -241,7 +220,7 @@ int main(int argc, char **argv)
 			struct client *new_c = malloc(sizeof(struct client));
 			if (!new_c)
 			{
-				perror("server: failed to malloc new client");
+				fprintf(stderr, "server: failed to malloc new client\n");
 				SSL_free(client_ssl);
 				close(newsockfd);
 				continue;
@@ -272,7 +251,7 @@ int main(int argc, char **argv)
 				{
 					if (n < 0 && errno != EWOULDBLOCK)
 					{
-						perror("read error on socket");
+						fprintf(stderr, "read error on socket\n");
 					}
 					np = remove_client(np);
 					continue;
@@ -284,7 +263,6 @@ int main(int argc, char **argv)
 					np->froptr = np->fr[MAX - 1];
 					np->fr[MAX - 1] = '\0';
 				}
-				printf("Server: Received '%s' from client socket %d\n", np->fr, np->sockfd);
 
 				char code = np->fr[0];
 				memmove(np->fr, np->fr + 1, np->froptr - (np->fr + 1));
@@ -297,14 +275,9 @@ int main(int argc, char **argv)
 					{
 						firstUser = 1;
 					}
-					printf("Server: First user status: %d\n", firstUser);
-
-					printf("Server: Received username '%s'\n", np->fr);
-
+					
 					if (check_username(np->fr, np))
 					{
-						printf("Server: Username '%s' is unique.\n", np->username);
-
 						if (firstUser)
 						{
 							snprintf(temp, MAX, "\nYou are the first user to join the chat\n");
@@ -327,16 +300,10 @@ int main(int argc, char **argv)
 					}
 					else
 					{
-						printf("Server: Username '%s' is already taken.\n", np->fr);
+						fprintf(stdout, "Server: Username '%s' is already taken.\n", np->fr);
 						np = remove_client(np);
 						continue;
 					}
-					break;
-				case 'n':
-					printf("Server: Received handshake message 'n'.\n");
-					snprintf(temp, MAX, "Handshake acknowledged.");
-					encode(temp, 'o');
-					add_to_writebuffs(temp, np);
 					break;
 				case 'm':
 					snprintf(temp, MAX, "%s: %s", np->username, np->fr);
@@ -358,13 +325,11 @@ int main(int argc, char **argv)
 				ssize_t nwrite = ssl_write_nb(np->ssl, np->to, n, np->sockfd);
 				if (nwrite < 0 && errno != EWOULDBLOCK)
 				{
-					perror("write error on socket");
+					fprintf(stderr, "write error on socket\n");
 					np = remove_client(np);
 				}
 				else
 				{
-					printf("Server: Sending '%s' to client socket %d\n", temp, np->sockfd);
-
 					np->tooptr += nwrite;
 					if (&(np->to[MAX]) == np->tooptr)
 					{
@@ -443,7 +408,7 @@ int set_nonblocking(int sock)
 	int flags = fcntl(sock, F_GETFL, 0);
 	if (flags == -1 || fcntl(sock, F_SETFL, flags | O_NONBLOCK) == -1)
 	{
-		perror("Error setting non-blocking mode");
+		fprintf(stderr, "Error setting non-blocking mode on socket\n");
 		return -1;
 	}
 	return 0;
@@ -555,7 +520,7 @@ ssize_t ssl_read_nb(SSL *ssl, void *buf, size_t len, int socket_fd)
 		}
 		else if (ssl_error == SSL_ERROR_SYSCALL)
 		{
-			perror("SSL_read() syscall error");
+			fprintf(stderr, "SSL_read() syscall error\n");
 		}
 		else if (ssl_error == SSL_ERROR_SSL)
 		{
