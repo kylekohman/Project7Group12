@@ -42,7 +42,7 @@ int main()
 
 	connect_to_server(&sockfd, &ssl, ctx, serv_addr, SERV_TCP_PORT, "Directory Server");
 
-	strcpy(s, "n"); // Send 'n' as the initial message
+	strncpy(s, "n", 2); // Send 'n' as the initial message
 	ssize_t nwritten = ssl_write_nb(ssl, s, strlen(s), sockfd);
 
 	for (;;)
@@ -66,33 +66,44 @@ int main()
 		{
 			if (FD_ISSET(STDIN_FILENO, &readset))
 			{
-				if (fgets(s, sizeof(s), stdin) != NULL)
+				ssize_t len = read(STDIN_FILENO, s, sizeof(s) - 1);
+
+				if (len > 0)
 				{
-					s[strcspn(s, "\n")] = '\0'; // Remove the newline character from input
+					s[len] = '\0';
+					if(s[len -1] == '\n'){
+						s[len -1] = '\0';
+					}
 
 					if (selectServer)
 					{
 						encode(s, 'c');
-						nwritten = ssl_write_nb(ssl, s, strlen(s), sockfd);
+						nwritten = ssl_write_nb(ssl, s, strnlen(s, len), sockfd);
 					}
 					else
 					{
 						if (requestUsername)
 						{
 							encode(s, 'r');
-							nwritten = ssl_write_nb(ssl, s, strlen(s), sockfd);
+							nwritten = ssl_write_nb(ssl, s, strnlen(s, len), sockfd);
 							requestUsername = 0;
 						}
 						else
 						{
 							encode(s, 'm');
-							nwritten = ssl_write_nb(ssl, s, strlen(s), sockfd);
+							nwritten = ssl_write_nb(ssl, s, strnlen(s, len), sockfd);
 						}
 					}
 				}
+				else if (len == 0){
+					fprintf(stderr, "End of input or connection closed\n");
+				}
+				else if(errno == EAGAIN || errno == EWOULDBLOCK){
+					continue;
+				}
 				else
 				{
-					perror("Error reading user input");
+					fprintf(stderr, "Error reading user input\n");
 				}
 			}
 
@@ -166,7 +177,7 @@ int main()
 		}
 		else
 		{
-			perror("select() failed");
+			fprintf(stderr, "Select call has failed");
 			exit(1);
 		}
 	}
@@ -181,7 +192,7 @@ void connect_to_server(int *sockfd, SSL **ssl, SSL_CTX *ctx, struct sockaddr_in 
 
 	if ((*sockfd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
 	{
-		perror("client: can't open stream socket");
+		fprintf(stderr, "client: can't open stream socket\n");
 		exit(1);
 	}
 
@@ -189,13 +200,13 @@ void connect_to_server(int *sockfd, SSL **ssl, SSL_CTX *ctx, struct sockaddr_in 
 	int flags = fcntl(*sockfd, F_GETFL, 0);
 	if (flags == -1)
 	{
-		perror("fcntl F_GETFL failed");
+		fprintf(stderr, "fcntl F_GEtFL has failed\n");
 		close(*sockfd);
 		exit(1);
 	}
 	if (fcntl(*sockfd, F_SETFL, flags | O_NONBLOCK) == -1)
 	{
-		perror("fcntl F_SETFL failed");
+		fprintf(stderr, "fcntl F_SETFL has failed\n");
 		close(*sockfd);
 		exit(1);
 	}
@@ -206,7 +217,7 @@ void connect_to_server(int *sockfd, SSL **ssl, SSL_CTX *ctx, struct sockaddr_in 
 	{
 		if (errno != EINPROGRESS)
 		{
-			perror("client: can't connect to server");
+			fprintf(stderr, "client: can't connect to server\n");
 			close(*sockfd);
 			exit(1);
 		}
@@ -218,7 +229,7 @@ void connect_to_server(int *sockfd, SSL **ssl, SSL_CTX *ctx, struct sockaddr_in 
 			FD_SET(*sockfd, &writefds);
 			if (select(*sockfd + 1, NULL, &writefds, NULL, NULL) < 0)
 			{
-				perror("select() failed during connect");
+				fprintf(stderr, "Select call failed during connection\n");
 				close(*sockfd);
 				exit(1);
 			}
@@ -247,7 +258,7 @@ void connect_to_server(int *sockfd, SSL **ssl, SSL_CTX *ctx, struct sockaddr_in 
 	*ssl = SSL_new(ctx);
 	if (!*ssl)
 	{
-		perror("Failed to create SSL");
+		fprintf(stderr, "Failed to create SSL context\n");
 		close(*sockfd);
 		exit(1);
 	}
@@ -272,7 +283,7 @@ void connect_to_server(int *sockfd, SSL **ssl, SSL_CTX *ctx, struct sockaddr_in 
 
 			if (select(*sockfd + 1, &readfds, &writefds, NULL, NULL) < 0)
 			{
-				perror("select() failed during SSL_connect");
+				fprintf(stderr, "Select call failed during SSL_connect call\n");
 				SSL_free(*ssl);
 				close(*sockfd);
 				exit(1);
