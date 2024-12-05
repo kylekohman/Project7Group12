@@ -35,6 +35,8 @@ void encode(char *, char);
 int find_server_port(char *);
 struct server *find_server(int socket);
 void parse_message(char *input, char *serverName, int *port);
+struct server *remove_server(struct server *ser);
+
 
 int main(int argc, char **argv)
 {
@@ -84,25 +86,48 @@ int main(int argc, char **argv)
 
 	clilen = sizeof(cli_addr); // we may not need this here
 
-	FD_ZERO(&readset);		  // clear read set
-	FD_SET(sockfd, &readset); // add the server
-	maxfd = sockfd;			  // set max counter
+	//FD_ZERO(&readset);		  // clear read set
+	//FD_SET(sockfd, &readset); // add the server
+	//maxfd = sockfd;			  // set max counter
 
 	printf("Directory server started and listening...\n");
 
 	for (;;)
 	{
+		FD_ZERO(&readset);
+		FD_SET(sockfd, &readset);
+		//FD_ZERO(&writeset);
+		maxfd = sockfd;
+
+		struct server *p;
+		SLIST_FOREACH(p, &head, list)
+		{
+			FD_SET(p->sockfd, &readset);
+			/*
+			if (p->to != p->tooptr)
+			{
+				FD_SET(p->sockfd, &writeset);
+			}
+			*/
+			if (p->sockfd > maxfd)
+			{
+				maxfd = p->sockfd;
+			}
+		}
+
+
+
 		char temp[MAX];
-		fd_set tempset = readset;
+		//fd_set tempset = readset;
 		memset(s, 0, MAX);
 
-		if (select(maxfd + 1, &tempset, NULL, NULL, NULL) < 0)
+		if (select(maxfd + 1, &readset, NULL, NULL, NULL) < 0)
 		{
 			perror("dir_server: select error");
 			exit(1);
 		}
 
-		if (FD_ISSET(sockfd, &tempset))
+		if (FD_ISSET(sockfd, &readset))
 		{
 			newsockfd = accept(sockfd, (struct sockaddr *)&cli_addr, &clilen);
 			if (newsockfd < 0)
@@ -160,33 +185,25 @@ int main(int argc, char **argv)
 			}
 		}
 
-		for (int i = 0; i <= maxfd; i++)
+		struct server *current = SLIST_FIRST(&head);
+		while(current != NULL)
 		{
-			if (i != sockfd && FD_ISSET(i, &tempset))
+			if (FD_ISSET(current->sockfd, &readset))
 			{
-				struct server *current = find_server(i);
+				//struct server *current = find_server(i);
 
-				if (!current || !current->ssl)
+				if (!current->ssl)
 				{
-					printf("Error: Invalid server or SSL connection for socket %d\n", i);
-					if (current)
-					{
-						SLIST_REMOVE(&head, current, server, list);
-						free(current);
-					}
-					FD_CLR(i, &readset);
-					close(i);
+					printf("Error: Invalid server or SSL connection for socket %d\n", current->sockfd);
+					current = remove_server(current);
 					continue;
 				}
 
-				ssize_t bytes = ssl_read_nb(current->ssl, s, MAX, i);
+				ssize_t bytes = ssl_read_nb(current->ssl, s, MAX, current->sockfd);
 				if (bytes <= 0)
 				{
 					cleanup_ssl(current->ssl, NULL);
-					SLIST_REMOVE(&head, current, server, list);
-					free(current);
-					FD_CLR(i, &readset);
-					close(i);
+					current = remove_server(current);
 					continue;
 				}
 
@@ -203,30 +220,24 @@ int main(int argc, char **argv)
 					// Verify certificate matches server name
 					if (!verify_certificate(current->ssl, temp))
 					{
-						ssl_write_nb(current->ssl, "dCertificate name mismatch", MAX, i);
+						ssl_write_nb(current->ssl, "dCertificate name mismatch", MAX, current->sockfd);
 						cleanup_ssl(current->ssl, NULL);
-						SLIST_REMOVE(&head, current, server, list);
-						free(current);
-						close(i);
-						FD_CLR(i, &readset);
+						current = remove_server(current);
 						continue;
 					}
 
-					if (!check_server_uniqueness(temp, port, i))
+					if (!check_server_uniqueness(temp, port, current->sockfd))
 					{
-						ssl_write_nb(current->ssl, "dServer name or port already in use", MAX, i);
+						ssl_write_nb(current->ssl, "dServer name or port already in use", MAX, current->sockfd);
 						cleanup_ssl(current->ssl, NULL);
-						SLIST_REMOVE(&head, current, server, list);
-						free(current);
-						close(i);
-						FD_CLR(i, &readset);
+						current = remove_server(current);
 					}
 					break;
 				}
 				case 'n':
 				{
 					char *menu = display_servers();
-					ssl_write_nb(current->ssl, menu, MAX, i);
+					ssl_write_nb(current->ssl, menu, MAX, current->sockfd);
 					free(menu);
 					break;
 				}
@@ -243,25 +254,26 @@ int main(int argc, char **argv)
 					else
 					{
 						snprintf(s, MAX, "b%d", port);
-						FD_CLR(i, &readset);
+						//FD_CLR(current->sockfd, &readset);
 					}
 					printf("Directory response: '%s'\n", s); // Log what is sent back
-					ssl_write_nb(current->ssl, s, MAX, i);
+					ssl_write_nb(current->ssl, s, MAX, current->sockfd);
 					break;
 				}
 
 				default:
 					snprintf(s, MAX, "Invalid request\n");
-					ssl_write_nb(current->ssl, s, MAX, i);
-				}
-			}
-		}
-	}
+					ssl_write_nb(current->ssl, s, MAX, current->sockfd);
+				}//end of switch case
+			}//end readset check
+			current = SLIST_NEXT(current, list);
+		}//end while
+	}//end of main loop
 
 	cleanup_ssl(NULL, ctx);
 	close(sockfd);
 	return 0;
-}
+}//end of main
 
 // Modified to store SSL connection
 int check_server_uniqueness(char *t, int p, int socket)
@@ -510,4 +522,14 @@ void cleanup_ssl(SSL *ssl, SSL_CTX *ctx)
 	}
 	if (ctx)
 		SSL_CTX_free(ctx);
+}
+
+struct server *remove_server(struct server *ser)
+{
+	close(ser->sockfd);
+	//FD_CLR(ser->sockfd, &readset);//remove later
+	struct server *n2 = SLIST_NEXT(ser, list);
+	SLIST_REMOVE(&head, ser, server, list);
+	free(ser);
+	return n2;
 }
