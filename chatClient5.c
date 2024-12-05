@@ -25,6 +25,7 @@ void cleanup_ssl(SSL *ssl, SSL_CTX *ctx);
 int main()
 {
 	char s[MAX] = {'\0'};
+	char serverName[MAX] = {'\0'};
 	fd_set readset;
 	int sockfd = -1;
 	struct sockaddr_in serv_addr;
@@ -72,6 +73,8 @@ int main()
 
 					if (selectServer)
 					{
+						strncpy(serverName, s, MAX);
+						serverName[MAX - 1] = '\0';
 						encode(s, 'c');
 						nwritten = ssl_write_nb(ssl, s, strlen(s), sockfd);
 					}
@@ -139,7 +142,7 @@ int main()
 						int port;
 						if (sscanf(s, "%d", &port) == 1)
 						{
-							connect_to_server(&sockfd, &ssl, ctx, serv_addr, port, "KSU Football");
+							connect_to_server(&sockfd, &ssl, ctx, serv_addr, port, serverName);
 						}
 						else
 						{
@@ -218,7 +221,6 @@ void connect_to_server(int *sockfd, SSL **ssl, SSL_CTX *ctx, struct sockaddr_in 
 			FD_SET(*sockfd, &writefds);
 			if (select(*sockfd + 1, NULL, &writefds, NULL, NULL) < 0)
 			{
-				perror("select() failed during connect");
 				close(*sockfd);
 				exit(1);
 			}
