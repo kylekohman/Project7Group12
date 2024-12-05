@@ -28,7 +28,7 @@ CFLAGS	+= -ggdb3
 
 # Uncomment the LIBS line below containing the library that you're using
 #LIBS	= -lcrypto -lgnutls
-#LIBS	= -lcrypto -lssl
+LIBS	= -lcrypto -lssl
 
 all:	tls
 
