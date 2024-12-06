@@ -55,7 +55,28 @@ int main(int argc, char **argv)
 		exit(1);
 	}
 
-	ctx = initialize_ssl_ctx(KSU_FOOTBALL_CERT, KSU_FOOTBALL_KEY, CA_CERT);
+	const char *cert_file = NULL;
+	const char *key_file = NULL;
+
+	// Match the input name with available certificates
+	if (strcmp(argv[1], "KSU Football") == 0)
+	{
+		cert_file = KSU_FOOTBALL_CERT;
+		key_file = KSU_FOOTBALL_KEY;
+	}
+	else if (strcmp(argv[1], "KSU Basketball") == 0)
+	{
+		cert_file = KSU_BASKETBALL_CERT;
+		key_file = KSU_BASKETBALL_KEY;
+	}
+	else
+	{
+		fprintf(stderr, "Error: Invalid team name. Must be 'football' or 'basketball'.\n");
+		exit(1);
+	}
+
+	// Initialize SSL context for the server
+	ctx = initialize_ssl_ctx(cert_file, key_file, CA_CERT);
 	if (!ctx)
 	{
 		fprintf(stderr, "Failed to initialize SSL context\n");
@@ -63,7 +84,7 @@ int main(int argc, char **argv)
 	}
 
 	// Initialize OpenSSL context for directory server connection
-	dir_ctx = initialize_ssl_ctx(KSU_FOOTBALL_CERT, KSU_FOOTBALL_KEY, CA_CERT); // Changed from NULL, NULL
+	dir_ctx = initialize_ssl_ctx(cert_file, key_file, CA_CERT);
 	if (!dir_ctx)
 	{
 		fprintf(stderr, "Failed to initialize directory client SSL context\n");

@@ -15,6 +15,9 @@
 #define KSU_FOOTBALL_CERT "ksu_football.crt"
 #define KSU_FOOTBALL_KEY "ksu_football.key"
 
+#define KSU_BASKETBALL_CERT "ksu_basketball.crt"
+#define KSU_BASKETBALL_KEY "ksu_basketball.key"
+
 // Function declarations for SSL utility functions
 SSL_CTX *initialize_ssl_ctx(const char *cert_file, const char *key_file, const char *ca_file);
 int verify_certificate(SSL *ssl, const char *expected_name);
